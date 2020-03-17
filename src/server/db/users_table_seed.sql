@@ -1,6 +1,1 @@
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    user_name VARCHAR(180),
-    picture TEXT,
-    auth_id TEXT
-);
+CREATE TABLE users ( id SERIAL PRIMARY KEY, first_name VARCHAR(255), last_name VARCHAR(255), email VARCHAR(255), hashed_password VARCHAR(255))

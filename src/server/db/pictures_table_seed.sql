@@ -1,0 +1,1 @@
+CREATE TABLE pictures ( id SERIAL PRIMARY KEY, user_id bigint, uploaded TIMESTAMP, title VARCHAR(255), description text, picture bytea)
