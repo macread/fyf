@@ -1,15 +1,9 @@
-//npm i express dotenv passport passport-auth0 express-session massive
-// to install all the server dependencies
-
-//set server parts first, then test to make sure it works.
-//next, if using authentication, set up passport 
-
-//require what we need
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const express = require('express')
   , bodyParser = require('body-parser')
-  , cookieParser = require('cookie-parser')
+  , passport = require('passport')
+  , LocalStrategy = require('passport-local')
   , session = require('express-session')
   , massive = require('massive')
   , bcrypt = require('bcrypt');
@@ -30,115 +24,102 @@ const app = express(); //server
 // set our application port
 app.set('port', SERVER_PORT);
 
-// initialize body-parser to parse incoming parameters requests to req.body
-app.use(bodyParser.json());
+// initialize body-parser to parse incoming parameters requests to req.body need to be huge to handle pictures
+app.use(bodyParser.json({ limit: '2000000kb', extended: true }));
+app.use(bodyParser.urlencoded({ limit: '2000000kb', extended: true }));
 
-// initialize cookie-parser to allow us access the cookies stored in the browser. 
-app.use(cookieParser());
-
-// initialize express-session to allow us track the logged-in user across sessions.
+//setup sessions
 app.use(session({
-  key: 'user_sid',
   secret: SESSION_SECRET,
   resave: false,
-  saveUninitialized: false,
-  cookie: {
-    expires: 600000
-  }
-}));
+  saveUninitialized: true
+}))
 
+//initialize passport
+app.use(passport.initialize());
+app.use(passport.session());
 
-// This middleware will check if user's cookie is still saved in browser and user is not set, then automatically log the user out.
-// This usually happens when you stop your express server after login, your cookie still remains saved in the browser.
-app.use((req, res, next) => {
-  if (req.cookies.user_sid && !req.session.user) {
-    res.clearCookie('user_sid');
-  }
-  next();
-});
-
-
-// middleware function to check for logged-in users
-var sessionChecker = (req, res, next) => {
-  if (req.session.user && req.cookies.user_sid) {
-    console.log("logged in")
-    // res.redirect('/dashboard');
-  } else {
-    next();
-  }
-};
-
-
-// route for Home-Page
-app.get('/', sessionChecker, (req, res) => {
-  res.redirect('/login');
-});
-
-
-// route for user signup
-app.post('/signUp', (req, res) => {
-  //create a new user
-  const hashedPassword = bcrypt.hashSync(req.body.password, bcrypt.genSaltSync());
-  const db = app.get('db');
-  db.create_user([req.body.firstName, req.body.lastName, req.body.email, hashedPassword]).then((user) => {
-    req.session.user = user;
-    res.json({ signedIn: true });
-  });
-});
-
-
-
-// route for user Login
-app.post('/signIn', (req, res) => {
-  console.log(req.body)
-  const db = app.get('db');
-  db.find_user([req.body.email]).then((user) => {
-    if (user.length === 0) {
-      console.log('unknown user name');
-      res.redirect('/signIn');
-    } else {
-      bcrypt.compare(req.body.password, user[0].hashed_password, (err, data) => {
-        if (err) throw err;
-        if (data) {
-          res.json({ signedIn: true });
+//passport
+// - setup authorization strategy
+passport.use(
+  new LocalStrategy({
+    usernameField: 'email',
+    passwordField: 'password',
+    passReqToCallback: true,
+  },
+    (req, username, password, done) => {
+      const db = app.get('db');
+      db.find_user(username).then((user) => {
+        if (user[0]) {
+          bcrypt.compare(password, user[0].hashed_password, (err, data) => {
+            if (err) throw err;
+            if (data) done(null, user[0].id); //just want to save the ID to save memory
+          });
         } else {
-          res.json({ signedIn: false });
-        }
-      });
+          //create a new user
+          const hashedPassword = bcrypt.hashSync(password, bcrypt.genSaltSync());
+          db.create_user([req.body.firstName, req.body.lastName, username, hashedPassword]).then((createdUser) => {
+            done(null, createdUser[0].id) //save the new id
+          }
 
+          )
+        }
+      })
     }
+  )
+)
+
+//serialize and deserialize sets up sessions
+// serializeUser gets called on log in and decides what is stored in 
+// in session
+passport.serializeUser((primaryKeyID, done) => {
+  done(null, primaryKeyID)
+})
+
+// deserizeUser runs everytime fetches what is stored in sessions
+// and puts it in req.user
+passport.deserializeUser((primaryKeyID, done) => {
+  app.get('db').find_session_user([primaryKeyID]).then(user => {
+    done(null, user[0])
+  })
+})
+
+//passport
+//setup authorization endpoints
+app.post('/signUp', passport.authenticate('local', {}),
+  (req, res) => {
+    res.json({ signedIn: true });
+  }
+);
+
+app.post('/signIn', passport.authenticate('local', {}),
+  (req, res) => {
+    res.json({ signedIn: true });
+  }
+);
+
+app.post('/addPicture', (req, res) => {
+  const db = app.get('db');
+  db.insert_picture([req.user.id, req.body.uploadDate, req.body.title, req.body.description, req.body.picture]).then(() => {
+    res.status(200)
   });
 });
 
-
-// route for user's dashboard
-app.get('/dashboard', (req, res) => {
-  if (req.session.user && req.cookies.user_sid) {
-    res.sendFile(__dirname + '/public/dashboard.html');
-  } else {
-    res.redirect('/login');
-  }
+app.get('/getAllPictures', (req, res) => {
+  const db = app.get('db');
+  db.get_all_pictures().then((pictures) => {
+    res.status(200).send(pictures);
+  });
 });
 
-
-// route for user logout
-app.get('/logout', (req, res) => {
-  if (req.session.user && req.cookies.user_sid) {
-    res.clearCookie('user_sid');
-    res.redirect('/');
-  } else {
-    res.redirect('/login');
-  }
+app.put('/updateTitle', (req, res) => {
+  const db = app.get('db');
+  db.update_title(req.body.pictureId, req.body.title).then(() => {
+    res.status(200);
+  });
 });
-
-
-// route for handling 404 requests(unavailable routes)
-app.use(function (req, res, next) {
-  res.status(404).send("Sorry can't find that!")
-});
-
 
 // start the express server
 app.listen(SERVER_PORT, () => {
-  console.log('FYF is on the air listening to port: ', SERVER_PORT);
+  console.log('FYF is on the air and listening to port:', SERVER_PORT);
 })

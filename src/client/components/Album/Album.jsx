@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import AppBar from '@material-ui/core/AppBar';
 import Button from '@material-ui/core/Button';
 import CameraIcon from '@material-ui/icons/PhotoCamera';
@@ -13,6 +13,15 @@ import Typography from '@material-ui/core/Typography';
 import { makeStyles } from '@material-ui/core/styles';
 import Container from '@material-ui/core/Container';
 import Link from '@material-ui/core/Link';
+import Select from '@material-ui/core/Select';
+import MenuItem from '@material-ui/core/MenuItem';
+import FormControl from '@material-ui/core/FormControl';
+import UploadDialog from '../UploadDialog';
+import InputLabel from '@material-ui/core/InputLabel';
+import TextField from '@material-ui/core/TextField';
+
+import axios from 'axios';
+import _ from 'lodash';
 
 function Copyright() {
   return (
@@ -57,12 +66,70 @@ const useStyles = makeStyles(theme => ({
     backgroundColor: theme.palette.background.paper,
     padding: theme.spacing(6),
   },
+  formControl: {
+    margin: theme.spacing(1),
+    minWidth: 120,
+  },
 }));
-
-const cards = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 export default function Album() {
   const classes = useStyles();
+
+  const [editTitle, setEditTitle] = useState(false);
+  const [pictures, setPictures] = useState([]);
+  const [originalPictures, setOriginalPictures] = useState([]);
+  const [search, setSearch] = useState();
+  const [sortColumn, setSortColumn] = useState('title')
+
+  useEffect(() => {
+    axios.get('/getAllPictures').then((result) => {
+      setPictures(result.data);
+      setOriginalPictures(result.data);
+    });
+  }, []);
+
+  const handleEditTitle = (pictureId) => {
+    if (editTitle) {
+      axios.put('/updateTitle',
+        {
+          pictureId,
+          title: _.find(pictures, ['id', pictureId]).title
+        }
+      );
+    }
+    setEditTitle(!editTitle);
+  }
+
+  const handleSearchClick = () => {
+    setPictures(_.filter(pictures, (picture) => {
+      if (picture.title.indexOf(search) >= 0) {
+        return picture;
+      }
+    }));
+  }
+  const handleClearSearch = () => {
+    setSearch('');
+    setPictures(originalPictures);
+  }
+
+  const handleSort = (e) => {
+    setSortColumn(e.target.value);
+    if (e.target.value === 'title') {
+      setPictures(_.sortBy(pictures, ['title', 'uploaded']));
+    } else {
+      setPictures(_.sortBy(pictures, ['uploaded', 'title']));
+    }
+  }
+
+  const handleTitleChange = (value, pictureId) => {
+    const updatedPictures = _.map(pictures, (picture) => {
+      if (picture.id === pictureId) {
+        picture.title = value;
+      };
+      return picture;
+    })
+    setPictures(updatedPictures)
+  }
 
   return (
     <React.Fragment>
@@ -76,58 +143,64 @@ export default function Album() {
         </Toolbar>
       </AppBar>
       <main>
-        {/* Hero unit */}
-        <div className={classes.heroContent}>
-          <Container maxWidth="sm">
-            <Typography component="h1" variant="h2" align="center" color="textPrimary" gutterBottom>
-              Album layout
-            </Typography>
-            <Typography variant="h5" align="center" color="textSecondary" paragraph>
-              Something short and leading about the collection below—its contents, the creator, etc.
-              Make it short and sweet, but not too short so folks don&apos;t simply skip over it
-              entirely.
-            </Typography>
-            <div className={classes.heroButtons}>
-              <Grid container spacing={2} justify="center">
-                <Grid item>
-                  <Button variant="contained" color="primary">
-                    Main call to action
-                  </Button>
-                </Grid>
-                <Grid item>
-                  <Button variant="outlined" color="primary">
-                    Secondary action
-                  </Button>
-                </Grid>
-              </Grid>
-            </div>
-          </Container>
-        </div>
         <Container className={classes.cardGrid} maxWidth="md">
-          {/* End hero unit */}
+          <FormControl className={classes.formControl}>
+            <TextField id="filled-search" label="Search" type="search" onChange={(e) => setSearch(e.target.value)} />
+            <Button size="small" color="secondart" onClick={handleClearSearch}>
+              Clear Search
+            </Button>
+            <Button size="small" color="primary" onClick={handleSearchClick}>
+              Search
+            </Button>
+          </FormControl>
+          <FormControl className={classes.formControl}>
+            <InputLabel shrink id="sort-select-label">
+              Sort By
+            </InputLabel>
+            <Select
+              labelId='sort-select'
+              id='sort-select'
+              value={sortColumn}
+              onChange={handleSort}
+            >
+              <MenuItem value={'title'}>Title</MenuItem>
+              <MenuItem value={'uploaded'}>Uploaded Date</MenuItem>
+            </Select>
+          </FormControl>
+          <UploadDialog />
           <Grid container spacing={4}>
-            {cards.map(card => (
-              <Grid item key={card} xs={12} sm={6} md={4}>
+            {pictures.map(picture => (
+              <Grid item key={picture.id} xs={12} sm={6} md={4}>
                 <Card className={classes.card}>
                   <CardMedia
                     className={classes.cardMedia}
-                    image="https://source.unsplash.com/random"
-                    title="Image title"
+                    image={`data:image/jpeg;base64,${picture.base64pict}`}
+                    title={picture.title}
                   />
                   <CardContent className={classes.cardContent}>
-                    <Typography gutterBottom variant="h5" component="h2">
-                      Heading
-                    </Typography>
+                    {editTitle ?
+                      <TextField
+                        id="title-field"
+                        label="Title"
+                        value={picture.title}
+                        onChange={(e) => handleTitleChange(e.target.value, picture.id)}
+                      />
+                      :
+                      <Typography gutterBottom variant="h5" component="h2">
+                        {picture.title}
+                      </Typography>
+                    }
+
                     <Typography>
-                      This is a media card. You can use this section to describe the content.
+                      {picture.description}
                     </Typography>
                   </CardContent>
                   <CardActions>
-                    <Button size="small" color="primary">
+                    <Button size="small" color="primary" >
                       View
                     </Button>
-                    <Button size="small" color="primary">
-                      Edit
+                    <Button size="small" color="primary" onClick={() => handleEditTitle(picture.id)}>
+                      {editTitle ? 'Save' : 'Edit'}
                     </Button>
                   </CardActions>
                 </Card>
@@ -138,12 +211,6 @@ export default function Album() {
       </main>
       {/* Footer */}
       <footer className={classes.footer}>
-        <Typography variant="h6" align="center" gutterBottom>
-          Footer
-        </Typography>
-        <Typography variant="subtitle1" align="center" color="textSecondary" component="p">
-          Something here to give the footer a purpose!
-        </Typography>
         <Copyright />
       </footer>
       {/* End footer */}
